@@ -1,0 +1,116 @@
+import { defineObject, FieldType } from 'twenty-sdk/define';
+
+import {
+  REPORT_RUN_OBJECT_ID,
+  RUN_DATA_AS_OF_FIELD_ID,
+  RUN_ERROR_FIELD_ID,
+  RUN_RAN_AT_FIELD_ID,
+  RUN_RECIPIENT_COUNT_FIELD_ID,
+  RUN_RECIPIENTS_FIELD_ID,
+  RUN_ROW_COUNT_FIELD_ID,
+  RUN_SPEC_ENGLISH_FIELD_ID,
+  RUN_STATUS,
+  RUN_STATUS_FIELD_ID,
+  RUN_TRIGGER,
+  RUN_TRIGGER_FIELD_ID,
+} from 'src/constants/universal-identifiers';
+
+// A ReportRun is the audit trail for one execution + delivery of a report.
+// It records what was interpreted, how many rows matched, who received it, and
+// any error — this is what makes people trust the numbers.
+export default defineObject({
+  universalIdentifier: REPORT_RUN_OBJECT_ID,
+  nameSingular: 'northpeakReportRun',
+  namePlural: 'northpeakReportRuns',
+  labelSingular: 'Report Run',
+  labelPlural: 'Report Deliveries',
+  description: 'Audit record for one execution + email delivery of a report.',
+  icon: 'IconMailForward',
+  isSearchable: true,
+  fields: [
+    {
+      universalIdentifier: RUN_STATUS_FIELD_ID,
+      name: 'status',
+      type: FieldType.SELECT,
+      label: 'Status',
+      icon: 'IconActivityHeartbeat',
+      defaultValue: `'${RUN_STATUS.SUCCESS}'`,
+      options: [
+        { value: RUN_STATUS.SUCCESS, label: 'Success', position: 0, color: 'green' },
+        { value: RUN_STATUS.PARTIAL, label: 'Partial', position: 1, color: 'orange' },
+        { value: RUN_STATUS.FAILED, label: 'Failed', position: 2, color: 'red' },
+        { value: RUN_STATUS.SKIPPED, label: 'Skipped', position: 3, color: 'gray' },
+      ],
+    },
+    {
+      universalIdentifier: RUN_TRIGGER_FIELD_ID,
+      name: 'trigger',
+      type: FieldType.SELECT,
+      label: 'Trigger',
+      icon: 'IconPlayerPlay',
+      defaultValue: `'${RUN_TRIGGER.SCHEDULED}'`,
+      options: [
+        { value: RUN_TRIGGER.SCHEDULED, label: 'Scheduled', position: 0, color: 'blue' },
+        { value: RUN_TRIGGER.MANUAL, label: 'Sent now', position: 1, color: 'green' },
+        { value: RUN_TRIGGER.PREVIEW, label: 'Preview', position: 2, color: 'gray' },
+      ],
+    },
+    {
+      universalIdentifier: RUN_RAN_AT_FIELD_ID,
+      name: 'ranAt',
+      type: FieldType.DATE_TIME,
+      label: 'Ran at',
+      icon: 'IconClockPlay',
+      defaultValue: 'now',
+    },
+    {
+      universalIdentifier: RUN_DATA_AS_OF_FIELD_ID,
+      name: 'dataAsOf',
+      type: FieldType.DATE_TIME,
+      label: 'Data as of',
+      description: 'Timestamp of the data snapshot used for this run.',
+      icon: 'IconDatabaseExport',
+      isNullable: true,
+      defaultValue: null,
+    },
+    {
+      universalIdentifier: RUN_ROW_COUNT_FIELD_ID,
+      name: 'rowCount',
+      type: FieldType.NUMBER,
+      label: 'Rows matched',
+      icon: 'IconList',
+      defaultValue: 0,
+    },
+    {
+      universalIdentifier: RUN_RECIPIENT_COUNT_FIELD_ID,
+      name: 'recipientCount',
+      type: FieldType.NUMBER,
+      label: 'Recipients',
+      icon: 'IconUsers',
+      defaultValue: 0,
+    },
+    {
+      universalIdentifier: RUN_RECIPIENTS_FIELD_ID,
+      name: 'recipients',
+      type: FieldType.TEXT,
+      label: 'Recipient emails',
+      description: 'Workspace-member addresses this delivery was sent to.',
+      icon: 'IconMail',
+    },
+    {
+      universalIdentifier: RUN_SPEC_ENGLISH_FIELD_ID,
+      name: 'specEnglish',
+      type: FieldType.TEXT,
+      label: 'Interpreted as',
+      description: 'Snapshot of the plain-English spec at delivery time.',
+      icon: 'IconLanguage',
+    },
+    {
+      universalIdentifier: RUN_ERROR_FIELD_ID,
+      name: 'error',
+      type: FieldType.TEXT,
+      label: 'Error',
+      icon: 'IconAlertTriangle',
+    },
+  ],
+});

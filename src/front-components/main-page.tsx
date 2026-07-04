@@ -1,11 +1,4 @@
 import { defineFrontComponent } from 'twenty-sdk/define';
-import {
-  Avatar,
-  IconBox,
-  IconHierarchy,
-  IconLayout,
-  IconSettingsAutomation,
-} from 'twenty-sdk/ui';
 import { useState } from 'react';
 
 import {
@@ -14,6 +7,75 @@ import {
 } from 'src/constants/universal-identifiers';
 
 const DOCS_BASE_URL = 'https://docs.twenty.com/developers/extend/apps';
+
+// The Remote DOM / Web Worker sandbox cannot bundle `twenty-sdk/ui` React
+// components — importing them throws `Dynamic require of "react" is not
+// supported` at runtime. So the icons and avatar below are plain inline SVG /
+// div, exactly like the other front components in this app.
+type IconProps = { color?: string; size?: number };
+
+const svgProps = (size: number) => ({
+  width: size,
+  height: size,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.6,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+});
+
+const IconBox = ({ color = '#999', size = 20 }: IconProps) => (
+  <svg {...svgProps(size)} style={{ color }}>
+    <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" />
+    <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" />
+  </svg>
+);
+
+const IconHierarchy = ({ color = '#999', size = 20 }: IconProps) => (
+  <svg {...svgProps(size)} style={{ color }}>
+    <path d="M9 3h6v4H9zM3 17h6v4H3zM15 17h6v4h-6zM12 7v4M12 11H6v6M12 11h6v6" />
+  </svg>
+);
+
+const IconLayout = ({ color = '#999', size = 20 }: IconProps) => (
+  <svg {...svgProps(size)} style={{ color }}>
+    <rect x="4" y="4" width="16" height="16" rx="2" />
+    <path d="M4 10h16M10 10v10" />
+  </svg>
+);
+
+const IconSettingsAutomation = ({ color = '#999', size = 20 }: IconProps) => (
+  <svg {...svgProps(size)} style={{ color }}>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M12 4v2M12 18v2M4 12h2M18 12h2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M17.7 6.3l-1.4 1.4M7.7 16.3l-1.4 1.4" />
+  </svg>
+);
+
+// A small colored circle with the app initial — replaces twenty-sdk/ui Avatar.
+const Avatar = ({ label, size = 64 }: { label: string; size?: number }) => {
+  const palette = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+  let seed = 0;
+  for (let i = 0; i < label.length; i++) seed = (seed + label.charCodeAt(i)) % palette.length;
+  return (
+    <div
+      style={{
+        width: size,
+        height: size,
+        borderRadius: '50%',
+        background: palette[seed],
+        color: '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: size * 0.42,
+        fontWeight: 700,
+      }}
+    >
+      {label.trim().charAt(0).toUpperCase() || '?'}
+    </div>
+  );
+};
 
 const CATEGORIES = [
   {
@@ -204,11 +266,7 @@ const MainPage = () => {
         padding: '40px',
       }}
     >
-      <Avatar
-        placeholder={APP_DISPLAY_NAME}
-        placeholderColorSeed={APP_DISPLAY_NAME}
-        size="xl"
-      />
+      <Avatar label={APP_DISPLAY_NAME} size={64} />
       <span
         style={{
           fontSize: '24px',
