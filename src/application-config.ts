@@ -34,7 +34,7 @@ export default defineApplication({
       // Brevo only sends from a verified sender. Set this to your verified Brevo
       // sender address (change it per deployment).
       description: 'From-address used for delivered report emails (must be a verified Brevo sender).',
-      value: 'long.tran@coupleverse.love',
+      value: 'no-reply@example.com',
       isSecret: false,
     },
     BREVO_SENDER_NAME: {

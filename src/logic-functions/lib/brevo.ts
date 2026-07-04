@@ -25,7 +25,10 @@ export async function sendEmail(args: {
   html: string;
 }): Promise<SendResult> {
   const apiKey = process.env.BREVO_API_KEY;
-  const senderEmail = process.env.BREVO_SENDER_EMAIL || 'reports@northpeak.example';
+  // Sender is configured via the BREVO_SENDER_EMAIL / BREVO_SENDER_NAME
+  // application variables (see application-config.ts) — set them per deployment
+  // in the app settings UI. No sender is hardcoded here.
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
   const senderName = process.env.BREVO_SENDER_NAME || 'NorthPeak Reports';
 
   if (args.to.length === 0) {
@@ -34,6 +37,13 @@ export async function sendEmail(args: {
   if (!apiKey) {
     // Graceful dry-run: nothing is sent, but callers can still render/preview.
     return { delivered: false, dryRun: true };
+  }
+  if (!senderEmail) {
+    return {
+      delivered: false,
+      dryRun: false,
+      error: 'BREVO_SENDER_EMAIL is not configured (set a verified Brevo sender in the app settings).',
+    };
   }
 
   const res = await fetch(BREVO_URL, {
