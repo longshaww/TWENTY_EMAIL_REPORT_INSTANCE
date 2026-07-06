@@ -63,6 +63,23 @@ export const AiPanel = ({
     endRef.current?.scrollIntoView?.({ block: 'end' });
   }, [messages.length, busy]);
 
+  // Clear-on-send. The Remote DOM host keeps the <textarea> uncontrolled and only
+  // pushes NON-empty values to it, so setting value='' never clears the box — and a
+  // `key` change alone doesn't reliably remount across the worker boundary. So on
+  // each send (composerNonce bump) we force a genuine unmount→remount: hide the
+  // textarea for one tick, then bring it back fresh (empty, since `input` is now '').
+  const [composerMounted, setComposerMounted] = useState(true);
+  const lastNonce = useRef(composerNonce);
+  useEffect(() => {
+    if (composerNonce !== lastNonce.current) {
+      lastNonce.current = composerNonce;
+      setComposerMounted(false);
+    }
+  }, [composerNonce]);
+  useEffect(() => {
+    if (!composerMounted) setComposerMounted(true);
+  }, [composerMounted]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
       <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -118,23 +135,27 @@ export const AiPanel = ({
           </div>
         ) : null}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-        <textarea
-          key={composerNonce}
-          value={input}
-          // Strip a leading newline: in the Remote DOM sandbox preventDefault on
-          // Enter is unreliable, so an Enter-to-send can still insert a stray '\n'
-          // into the just-cleared input — stripping it here keeps the box clean
-          // without affecting Shift+Enter multi-line input (mid-text newlines stay).
-          onChange={(e) => setInput(e.target.value.replace(/^\n+/, ''))}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              if (!busy && input.trim()) onSend();
-            }
-          }}
-          placeholder={selectedTag ? `Ask about this ${selectedTag.label}… e.g. "make it a pie chart"` : 'Ask the AI to arrange the email…'}
-          style={{ ...inputStyle(T), minHeight: 38, maxHeight: 120, resize: 'none', flex: 1 }}
-        />
+        {composerMounted ? (
+          <textarea
+            value={input}
+            // Strip a leading newline: in the Remote DOM sandbox preventDefault on
+            // Enter is unreliable, so an Enter-to-send can still insert a stray '\n'
+            // into the just-cleared input — stripping it here keeps the box clean
+            // without affecting Shift+Enter multi-line input (mid-text newlines stay).
+            onChange={(e) => setInput(e.target.value.replace(/^\n+/, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                if (!busy && input.trim()) onSend();
+              }
+            }}
+            placeholder={selectedTag ? `Ask about this ${selectedTag.label}… e.g. "make it a pie chart"` : 'Ask the AI to arrange the email…'}
+            style={{ ...inputStyle(T), minHeight: 38, maxHeight: 120, resize: 'none', flex: 1 }}
+          />
+        ) : (
+          // One-tick placeholder while the textarea unmounts, so layout stays put.
+          <div style={{ ...inputStyle(T), minHeight: 38, maxHeight: 120, flex: 1 }} />
+        )}
         <button
           onClick={onSend}
           disabled={busy || !input.trim()}
