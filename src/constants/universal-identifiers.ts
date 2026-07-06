@@ -121,6 +121,7 @@ export const LF_CREATE_REPORT_ID = '2064f0a5-ddae-4b59-b8ce-4995af8f5288';
 export const LF_ARRANGE_REPORT_ID = 'c1e7a4d2-3b8f-4e6a-9c15-7f2d0a9b4e63';
 export const LF_LIST_OBJECTS_ID = 'a1502f99-e47c-42b0-842f-bcd5510c8840';
 export const LF_LIST_SCOPE_FIELDS_ID = 'd3f6b2a1-7c4e-4a9b-8f21-3e5c9a0b1d47';
+export const LF_POST_INSTALL_ID = 'b7eb9186-6e69-432b-8efa-75013e6de41c';
 
 // --- Reporting-dimension fields added to standard objects ------------------
 export const COMPANY_INDUSTRY_FIELD_ID = '1cf8f3a0-4322-4b91-9f3c-7e593fc2863c';
