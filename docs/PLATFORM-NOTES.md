@@ -13,19 +13,20 @@ the builder stays a **portable Twenty app** that runs on any vanilla Twenty inst
 
 | Constraint (verified via Playwright / testing) | Workaround in this app |
 | --- | --- |
-| **`draggable` + HTML5 drag events are not forwarded.** Every canvas block rendered with `title`/`cursor:grab` applied but `el.draggable === false`, and `document.querySelectorAll('[draggable="true"]').length === 0`. So `dragstart`/`dragover`/`drop` never fire. | **Click-to-place reorder:** click a block's **⠿ Move** grip to pick it up, then click a **"▸ Move here ◂"** slot to drop it. **↑ / ↓** buttons remain as a fallback. |
-| **Only trusted click / pointer / keyboard events forward, and there's no DOM measurement** (`getBoundingClientRect` on the worker's proxy elements is not meaningful). | A position-based drag-and-drop **library can't work** here — `dnd-kit` needs real DOM measurement, and `framer-motion`'s drag (bundled transitively in the SDK, not exported) is pointer-based but still needs layout metrics. Reorder is therefore **click-driven**, which forwards reliably. |
+| **Native HTML5 drag (`draggable` attr + `dragstart`/`dragover`/`drop`) is not forwarded** — only the bare `drag` event is mapped, and `draggable` isn't in the host's property schema. | We don't use HTML5 drag. Reorder is a **pointer-based drag** instead (next row), which needs none of it. |
+| **Pointer events DO forward, with coordinates.** Verified against Twenty core v2.15.0 (`packages/twenty-front-component-renderer`): `pointerdown/pointermove/pointerup/pointerenter/pointerleave` (and `mousedown/move/up`) are registered on every element, and the host serializes `clientX/clientY/pageX/pageY/offsetX/offsetY/movementX/Y/pointerId/button` back to the worker. | **Real drag-and-drop reorder:** grab a block by its **⠿** handle (`onPointerDown`), the list reflows live as the pointer moves over other blocks (each block's `onPointerEnter` sets the insertion index), and it drops on `pointerup`. A floating ghost follows the cursor via the forwarded `clientX/clientY`. No click-to-place, no ↑/↓. |
+| **DOM measurement is still unavailable** (`getBoundingClientRect` on the worker's proxy elements is not meaningful), so a measurement-based DnD **library can't work** (`dnd-kit`, `framer-motion` drag). | The pointer-drag deliberately avoids measurement: drop targets come from per-block `onPointerEnter` + a drag-direction heuristic, not geometry. |
 | **CSS keyframe animations are stripped.** | Motion (the assistant "thinking…" dots, the loading-skeleton pulse) is driven by **JS timers** (`setInterval`) updating inline styles/text. |
 | **`event.stopPropagation()` is unreliable** across the worker boundary — a child handler can't stop an ancestor handler. | No competing "click-away" handlers on ancestors; selection is changed with explicit controls (a block click / a **Deselect** button). |
 | **First paint is blank for a moment.** Under network throttling the whole page's `body` stays empty for several seconds. | That blank is **Twenty's own SPA app-boot** (loading the host shell), which runs *before* our component mounts — no in-app code can fill it. Our **skeleton** covers the phase we *do* control: our component mounted, its data still fetching (near-instant on a local server, visible on slower/cloud connections). |
 
-## How native drag *could* be enabled (deliberately not done)
+## Why pointer-drag, not native HTML5 drag
 
-Native HTML5 drag would only need a change in **Twenty core** (the host-side Remote DOM receiver):
-whitelist the `draggable` attribute and forward the `dragstart` / `dragover` / `drop` events (with
-their `clientX/clientY`) to the worker. The builder's block rows could then use native drag directly.
+Native HTML5 drag would require a change in **Twenty core** (the host-side Remote DOM receiver):
+whitelist the `draggable` attribute and forward `dragstart` / `dragover` / `drop`. We avoid that on
+purpose — it would fork core and make the app non-portable.
 
-We **did not** do this because it lives in Twenty core, not the app: the evaluators run **vanilla
-Twenty**, so a forked/patched core wouldn't run this app's drag on their instance — it would stop
-being a portable app. Click-to-place gives the same outcome (move a block anywhere in one gesture)
-on any Twenty, today.
+It turns out we don't need it. Twenty core already forwards **pointer events with coordinates** (see
+the table above), so the builder implements a genuine drag-and-drop with `pointerdown` →
+`pointermove` (live ghost + reflow) → `pointerup`, using only what the stock sandbox exposes. This
+runs on **any vanilla Twenty** — no core patch, no forked image.

@@ -36,3 +36,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 *.d.ts
+
+# local debug artifacts
+.playwright-mcp/
+report-page.png

@@ -130,7 +130,19 @@ const ReportBuilder = () => {
   const [rightTab, setRightTab] = useState<'ai' | 'block' | 'setup'>('ai');
   const [device, setDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [movingId, setMovingId] = useState<string | null>(null); // block picked up for click-to-place
+  // Pointer-drag reorder state — real drag-and-drop. Twenty's Remote DOM host
+  // forwards pointer events WITH coordinates to the worker, so there is no
+  // click-to-place and no ↑/↓ fallback: a block is reordered purely by dragging.
+  // Active drag source: reordering an existing canvas block ('move'), or inserting
+  // a new block/section dragged in from the left palette ('block'/'section').
+  const [drag, setDrag] = useState<
+    | { kind: 'move'; id: string }
+    | { kind: 'block'; type: BlockType; label: string }
+    | { kind: 'section'; id: string; label: string }
+    | null
+  >(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null); // previewed insertion index 0..blocks.length
+  const [ghost, setGhost] = useState<{ x: number; y: number } | null>(null); // floating drag label at clientX/Y
   const [showTour, setShowTour] = useState(false);
   const [previewAsId, setPreviewAsId] = useState<string>(''); // "Preview as [recipient]" member id
   const [starterObject, setStarterObject] = useState<string>('opportunity'); // data source for the blank-report template picker
@@ -157,6 +169,12 @@ const ReportBuilder = () => {
   // re-selects the just-removed id. (Self-healing: if propagation *was* stopped, the
   // next plain wrapper click clears the stale flag.)
   const suppressSelectRef = useRef(false);
+  // A whole block is draggable (not just its ⠿ grip). To keep a plain click as a
+  // select, pointerdown on the block body only *arms* a pending drag; it promotes
+  // to a real drag once the pointer moves past a small threshold. Toolbar controls
+  // (✕) and the grip set suppressDragRef so they don't arm the body drag.
+  const suppressDragRef = useRef(false);
+  const pendingRef = useRef<{ id: string; x: number; y: number } | null>(null);
 
   const T = useMemo(() => uiTheme(scheme === 'dark'), [scheme]);
   const tokens = useMemo(() => resolveTheme(theme), [theme]);
@@ -388,27 +406,75 @@ const ReportBuilder = () => {
   const patch = (id: string, p: Partial<Block>) => commit(blocks.map((b) => (b.id === id ? { ...b, ...p } : b)), theme);
   const patchTheme = (p: Partial<ReportTheme>) => commit(blocks, { ...theme, ...p });
 
-  // Click-to-place reorder. Native HTML5 drag does NOT work in Twenty's Remote
-  // DOM sandbox — the `draggable` attribute isn't forwarded to the host DOM — so
-  // a block is picked up via its ⠿ grip and dropped by clicking a "Move here"
-  // slot (clicks DO forward). ↑/↓ remain as a fallback.
-  const placeAt = (index: number) => {
-    if (movingId === null) return;
-    const from = blocks.findIndex((b) => b.id === movingId);
-    setMovingId(null);
-    if (from < 0) return;
-    const target = from < index ? index - 1 : index;
-    if (target !== from) move(from, target);
+  // Real drag-and-drop. Twenty's Remote DOM host forwards pointer events WITH
+  // coordinates (clientX/Y) to the worker, so both interactions are pointer-driven:
+  //   • reorder — grab a canvas block by its ⠿ handle (onPointerDown), the list
+  //     reflows live as the pointer moves over other blocks (onPointerEnter), drop
+  //     on pointerup. No click-to-place, no ↑/↓.
+  //   • insert — drag a tile from the left palette into a drop gap; a plain tap
+  //     still appends at the end (dragOverIndex defaults to blocks.length).
+  const setGhostFrom = (e: any) => { if (typeof e?.clientX === 'number') setGhost({ x: e.clientX, y: e.clientY }); };
+  const startMove = (id: string, e: any) => {
+    setSelectedId(id);
+    setDrag({ kind: 'move', id });
+    setDragOverIndex(blocks.findIndex((b) => b.id === id));
+    setGhostFrom(e);
+  };
+  const startInsertBlock = (type: BlockType, label: string, e: any) => {
+    setDrag({ kind: 'block', type, label });
+    setDragOverIndex(blocks.length); // no move → drop = append at end
+    setGhostFrom(e);
+  };
+  const startInsertSection = (id: string, label: string, e: any) => {
+    setDrag({ kind: 'section', id, label });
+    setDragOverIndex(blocks.length);
+    setGhostFrom(e);
+  };
+  // Preview the insertion point when the pointer is over block i.
+  const dragOver = (i: number) => {
+    if (drag === null) return;
+    if (drag.kind === 'move') {
+      const from = blocks.findIndex((b) => b.id === drag.id);
+      setDragOverIndex(i <= from ? i : i + 1); // before/after based on direction
+    } else {
+      setDragOverIndex(i); // inserting a new item → before the hovered block
+    }
+  };
+  const cancelDrag = () => { setDrag(null); setDragOverIndex(null); setGhost(null); };
+  const endDrag = () => {
+    if (drag === null) return;
+    const d = drag;
+    const index = dragOverIndex;
+    cancelDrag();
+    suppressSelectRef.current = true; // swallow the trailing click so it doesn't re-select
+    if (index === null) return;
+    if (d.kind === 'move') {
+      const from = blocks.findIndex((b) => b.id === d.id);
+      if (from < 0) return;
+      const target = from < index ? index - 1 : index;
+      if (target !== from) move(from, target);
+    } else if (d.kind === 'block') {
+      insertAt(d.type, index);
+    } else {
+      insertSection(d.id, index);
+    }
   };
 
-  // Cancel a pending move with Escape (best-effort in the sandbox).
+  // While a drag is active: follow the pointer with the ghost across the whole
+  // window (so palette drags that start off-canvas track too), finish on pointerup,
+  // and cancel on Escape. Deps close over fresh drag/index state; document-level
+  // listeners forward in the sandbox (best-effort).
   useEffect(() => {
-    if (!movingId) return;
+    if (drag === null) return;
     const doc: any = (globalThis as any)?.document;
-    const onKey = (e: any) => { if (e?.key === 'Escape') setMovingId(null); };
+    const onMove = (e: any) => setGhostFrom(e);
+    const onUp = () => endDrag();
+    const onKey = (e: any) => { if (e?.key === 'Escape') cancelDrag(); };
+    doc?.addEventListener?.('pointermove', onMove);
+    doc?.addEventListener?.('pointerup', onUp);
     doc?.addEventListener?.('keydown', onKey);
-    return () => doc?.removeEventListener?.('keydown', onKey);
-  }, [movingId]);
+    return () => { doc?.removeEventListener?.('pointermove', onMove); doc?.removeEventListener?.('pointerup', onUp); doc?.removeEventListener?.('keydown', onKey); };
+  }, [drag, dragOverIndex, blocks]);
 
 
   // Switch the report's data source (Twenty object). Re-seeds a clean base spec
@@ -720,26 +786,12 @@ const ReportBuilder = () => {
                 <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Blocks</div>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {BLOCK_PALETTE.map((p) => (
-                    <div
-                      key={p.type}
-                      onClick={() => insertAt(p.type, blocks.length)}
-                      title={`${p.hint} — click to add`}
-                      style={paletteTile(T)}
-                    >
-                      {p.label}
-                    </div>
+                    <PaletteTile key={p.type} T={T} type={p.type} label={p.label} hint={p.hint} onPointerDown={(e: any) => startInsertBlock(p.type, p.label, e)} />
                   ))}
                 </div>
                 <div style={{ fontSize: 11, fontWeight: 700, color: T.sub, textTransform: 'uppercase', letterSpacing: '.04em', margin: '14px 0 8px' }}>Sections</div>
                 {SECTION_PRESETS.map((s) => (
-                  <div
-                    key={s.id}
-                    onClick={() => insertSection(s.id, blocks.length)}
-                    title="Click to add this section"
-                    style={{ ...paletteTile(T), marginBottom: 8, textAlign: 'left' }}
-                  >
-                    + {s.label}
-                  </div>
+                  <SectionTile key={s.id} T={T} label={s.label} onPointerDown={(e: any) => startInsertSection(s.id, s.label, e)} />
                 ))}
               </>
             ) : (
@@ -754,15 +806,18 @@ const ReportBuilder = () => {
             would clear the selection the instant a block is clicked. Selection is
             changed by clicking another block or the "Deselect" button below. */}
         <div style={{ flex: 1, position: 'relative', minHeight: 0, display: 'flex' }}>
-        <div style={{ flex: 1, overflow: 'auto', background: T.canvasBg, padding: '24px 0', minHeight: 0, opacity: aiBusy ? 0.55 : 1 }}>
-          {movingId ? (
+        <div
+          onPointerMove={(e: any) => { if (drag !== null) setGhostFrom(e); }}
+          onPointerUp={endDrag}
+          style={{ flex: 1, overflow: 'auto', background: T.canvasBg, padding: '24px 0', minHeight: 0, opacity: aiBusy ? 0.55 : 1, touchAction: drag !== null ? 'none' : 'auto', userSelect: drag !== null ? 'none' : 'auto' }}
+        >
+          {drag !== null ? (
             <div style={{ width: canvasWidth, maxWidth: '100%', margin: '0 auto 12px', display: 'flex', alignItems: 'center', gap: 8, background: T.accentBg, border: `1px solid ${T.accent}`, color: T.accent, borderRadius: 8, padding: '8px 12px', fontSize: 12, fontWeight: 600 }}>
-              Moving a block — click a “▸ Move here ◂” slot to drop it.
-              <button onClick={() => setMovingId(null)} style={{ marginLeft: 'auto', border: `1px solid ${T.accent}`, background: 'transparent', color: T.accent, borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
+              {drag.kind === 'move' ? 'Dragging a block' : 'Drag into place'} — release to drop it where the line shows.
+              <button onClick={cancelDrag} style={{ marginLeft: 'auto', border: `1px solid ${T.accent}`, background: 'transparent', color: T.accent, borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
             </div>
           ) : null}
           <div style={{ width: canvasWidth, maxWidth: '100%', margin: '0 auto', background: tokens.card, border: `1px solid ${tokens.border}`, borderRadius: 12, overflow: 'hidden', fontFamily: tokens.font }}>
-            <DropZone T={T} active={!!movingId} onClick={() => placeAt(0)} />
             {isBlank ? (
               <TemplateGallery
                 objects={dataSources}
@@ -782,39 +837,68 @@ const ReportBuilder = () => {
                 Add blocks from the left rail, or ask the AI assistant to build the email.
               </div>
             ) : (
-              blocks.map((b, i) => (
-                <div key={b.id}>
-                  <div
-                    onClick={() => {
-                      // A toolbar click may have bubbled here (sandbox quirk) — if so,
-                      // the handler already did the right thing; don't re-select.
-                      if (suppressSelectRef.current) { suppressSelectRef.current = false; return; }
-                      setSelectedId(b.id);
-                      setRightTab('block');
-                    }}
-                    title={movingId === b.id ? 'Moving — click a "Move here" slot' : 'Click to edit'}
-                    style={{ position: 'relative', outline: movingId === b.id ? `2px dashed ${T.accent}` : selectedId === b.id ? `2px solid ${T.accent}` : 'none', outlineOffset: -2, cursor: 'pointer', opacity: movingId === b.id ? 0.5 : 1 }}
-                  >
-                    {/* move grip — pick the block up, then click a slot to drop it */}
-                    <button
-                      onClick={() => { suppressSelectRef.current = true; setSelectedId(b.id); setMovingId(movingId === b.id ? null : b.id); }}
-                      title="Move this block"
-                      style={{ position: 'absolute', top: 4, left: 4, zIndex: 2, fontSize: 11, fontWeight: 600, cursor: 'pointer', color: movingId === b.id ? '#fff' : T.sub, background: movingId === b.id ? T.accent : T.panel, border: `1px solid ${movingId === b.id ? T.accent : T.border}`, borderRadius: 6, padding: '2px 7px', lineHeight: '16px' }}
+              blocks.map((b, i) => {
+                const dragging = drag?.kind === 'move' && drag.id === b.id;
+                const dropActive = drag !== null && !dragging; // show drop gaps around non-dragged blocks
+                return (
+                  <div key={b.id}>
+                    {/* leading gap → insert before this block */}
+                    <DropZone T={T} active={dropActive} over={dragOverIndex === i} onEnter={() => setDragOverIndex(i)} />
+                    <div
+                      // Whole block is a drag source. pointerdown arms a pending drag;
+                      // it promotes on pointermove past a small threshold (so a plain
+                      // click still selects). Toolbar/grip set suppressDragRef to opt out.
+                      onPointerDown={(e: any) => {
+                        if (suppressDragRef.current) { suppressDragRef.current = false; return; }
+                        if (drag !== null) return;
+                        pendingRef.current = { id: b.id, x: e?.clientX ?? 0, y: e?.clientY ?? 0 };
+                      }}
+                      onPointerMove={(e: any) => {
+                        if (drag !== null) { dragOver(i); return; }
+                        const p = pendingRef.current;
+                        if (p && p.id === b.id && (Math.abs((e?.clientX ?? 0) - p.x) > 4 || Math.abs((e?.clientY ?? 0) - p.y) > 4)) {
+                          pendingRef.current = null;
+                          startMove(p.id, e);
+                        }
+                      }}
+                      onPointerUp={() => { pendingRef.current = null; }}
+                      onPointerEnter={() => dragOver(i)}
+                      onClick={() => {
+                        // A toolbar click may have bubbled here (sandbox quirk) — if so,
+                        // the handler already did the right thing; don't re-select.
+                        if (suppressSelectRef.current) { suppressSelectRef.current = false; return; }
+                        setSelectedId(b.id);
+                        setRightTab('block');
+                      }}
+                      title={dragging ? 'Dragging…' : 'Drag anywhere to reorder · click to edit'}
+                      style={{ position: 'relative', outline: selectedId === b.id ? `2px solid ${T.accent}` : 'none', outlineOffset: -2, cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', opacity: dragging ? 0.4 : 1, pointerEvents: dragging ? 'none' : 'auto' }}
                     >
-                      ⠿ {movingId === b.id ? 'Moving…' : 'Move'}
-                    </button>
-                    {selectedId === b.id ? (
-                      <div style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 4, zIndex: 2 }}>
-                        <IconBtn T={T} title="Move up" onClick={() => { suppressSelectRef.current = true; move(i, i - 1); }}>↑</IconBtn>
-                        <IconBtn T={T} title="Move down" onClick={() => { suppressSelectRef.current = true; move(i, i + 1); }}>↓</IconBtn>
-                        <IconBtn T={T} title="Delete" onClick={() => { suppressSelectRef.current = true; remove(b.id); }}>✕</IconBtn>
-                      </div>
+                      {/* grip badge — a visual affordance; the whole block drags, but this
+                          also starts a drag immediately (no threshold) when grabbed directly */}
+                      <button
+                        onPointerDown={(e: any) => { suppressDragRef.current = true; startMove(b.id, e); }}
+                        title="Drag to reorder"
+                        style={{ position: 'absolute', top: 4, left: 4, zIndex: 2, fontSize: 11, fontWeight: 600, cursor: dragging ? 'grabbing' : 'grab', touchAction: 'none', userSelect: 'none', color: dragging ? '#fff' : T.sub, background: dragging ? T.accent : T.panel, border: `1px solid ${dragging ? T.accent : T.border}`, borderRadius: 6, padding: '2px 7px', lineHeight: '16px' }}
+                      >
+                        ⠿ {dragging ? 'Dragging…' : 'Drag'}
+                      </button>
+                      {selectedId === b.id ? (
+                        <div
+                          onPointerDown={() => { suppressDragRef.current = true; }}
+                          style={{ position: 'absolute', top: 4, right: 4, display: 'flex', gap: 4, zIndex: 2 }}
+                        >
+                          <IconBtn T={T} title="Delete" onClick={() => { suppressSelectRef.current = true; remove(b.id); }}>✕</IconBtn>
+                        </div>
+                      ) : null}
+                      <BlockView block={b} T={tokens} data={data} />
+                    </div>
+                    {/* trailing gap after the last block → insert at end */}
+                    {i === blocks.length - 1 ? (
+                      <DropZone T={T} active={dropActive} over={dragOverIndex === i + 1} onEnter={() => setDragOverIndex(i + 1)} />
                     ) : null}
-                    <BlockView block={b} T={tokens} data={data} />
                   </div>
-                  <DropZone T={T} active={!!movingId} onClick={() => placeAt(i + 1)} />
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>
@@ -823,6 +907,12 @@ const ReportBuilder = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: T.panel, border: `1px solid ${T.border}`, borderRadius: 999, padding: '8px 16px', fontSize: 13, fontWeight: 600, color: T.ink }}>
                 <span style={{ fontSize: 15 }}>✨</span> Updating your report…
               </div>
+            </div>
+          ) : null}
+          {/* floating label that follows the pointer while dragging (fixed → uses viewport clientX/Y) */}
+          {drag !== null && ghost ? (
+            <div style={{ position: 'fixed', left: ghost.x + 14, top: ghost.y + 10, zIndex: 9999, pointerEvents: 'none', background: T.accent, color: '#fff', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, boxShadow: '0 6px 18px rgba(0,0,0,0.28)', whiteSpace: 'nowrap' }}>
+              ⠿ {drag.kind === 'move' ? (blocks.find((b) => b.id === drag.id)?.type ?? 'block') : drag.label}
             </div>
           ) : null}
         </div>
@@ -1052,17 +1142,16 @@ const BuilderSkeleton = ({ T }: { T: UITheme }) => {
   );
 };
 
-// A slot between blocks. Idle: a thin spacer. When a block is "picked up"
-// (`active`), it becomes a big, obvious clickable "Move here" target — clicks are
-// the only reliable pointer interaction in Twenty's Remote DOM sandbox (native
-// drag events never fire because `draggable` isn't forwarded to the host DOM).
-const DropZone = ({ T, active, onClick }: { T: UITheme; active?: boolean; onClick?: () => void }) => {
+// A gap between blocks. Idle: a thin spacer. During a drag (`active`) it becomes
+// a hover target that sets the insertion index (onPointerEnter) and renders the
+// drop-indicator bar when it is the current target (`over`). Pointer events —
+// including coordinates — forward through Twenty's Remote DOM host, so reorder is
+// real drag-and-drop rather than click-to-place.
+const DropZone = ({ T, active, over, onEnter }: { T: UITheme; active?: boolean; over?: boolean; onEnter?: () => void }) => {
   if (!active) return <div style={{ height: 8 }} />;
   return (
-    <div onClick={onClick} title="Move the block here" style={{ padding: '5px 12px', cursor: 'pointer' }}>
-      <div style={{ background: T.accentBg, color: T.accent, border: `1px dashed ${T.accent}`, borderRadius: 6, padding: '5px 0', textAlign: 'center', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.04em' }}>
-        ▸ Move here ◂
-      </div>
+    <div onPointerEnter={onEnter} style={{ padding: '4px 12px', cursor: 'grabbing' }}>
+      <div style={{ height: over ? 6 : 2, background: over ? T.accent : T.border, borderRadius: 3 }} />
     </div>
   );
 };
@@ -1227,18 +1316,75 @@ const segStyle = (T: UITheme, active: boolean) => ({
   cursor: 'pointer',
 });
 
-const paletteTile = (T: UITheme) => ({
-  border: `1px solid ${T.border}`,
-  borderRadius: 8,
-  padding: '12px 8px',
-  fontSize: 12,
-  fontWeight: 600,
-  color: T.ink,
-  background: T.panel2,
-  cursor: 'grab',
-  textAlign: 'center' as const,
-  userSelect: 'none' as const,
-});
+// Inline Tabler-style glyphs. stroke = currentColor, so the parent's `color` tints them.
+const blockGlyph = (type: BlockType) => {
+  switch (type) {
+    case 'header': return (<><path d="M7 5v14M17 5v14M7 12h10" /></>);
+    case 'text': return (<><path d="M6 5l6 14 6-14M8.5 14h7" /></>);
+    case 'metricRow': return (<><rect x="3" y="6" width="7" height="12" rx="1.5" /><rect x="14" y="6" width="7" height="12" rx="1.5" /></>);
+    case 'chart': return (<><rect x="4" y="12" width="3.6" height="8" rx="1" /><rect x="10.2" y="7" width="3.6" height="13" rx="1" /><rect x="16.4" y="14" width="3.6" height="6" rx="1" /></>);
+    case 'barBreakdown': return (<><rect x="4" y="5" width="15" height="3" rx="1.4" /><rect x="4" y="10.5" width="10" height="3" rx="1.4" /><rect x="4" y="16" width="6" height="3" rx="1.4" /></>);
+    case 'table': return (<><rect x="4" y="4" width="16" height="16" rx="2" /><path d="M4 10h16M4 15h16M10 4v16" /></>);
+    case 'narrative': return (<><path d="M12 4l1.8 5.2L19 11l-5.2 1.8L12 18l-1.8-5.2L7 11l5.2-1.8z" /></>);
+    case 'insights': return (<><path d="M3 17l6-6 4 4 8-8" /><path d="M17 7h4v4" /></>);
+    case 'specEcho': return (<><circle cx="12" cy="12" r="9" /><path d="M12 8h.01M11 12h1v4h1" /></>);
+    case 'logo': return (<><path d="M12 3l7 4v6c0 3.9-3 6-7 8-4-2-7-4.1-7-8V7z" /></>);
+    case 'image': return (<><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="M21 15l-5-5-9 9" /></>);
+    case 'button': return (<><path d="M4 4l6.5 16 2.2-6.8L19.5 11z" /></>);
+    case 'divider': return (<><path d="M4 12h2.5M9.5 12h2.5M15 12h2.5M20.5 12h.5" /></>);
+    case 'spacer': return (<><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4" /></>);
+    default: return (<><rect x="4" y="4" width="16" height="16" rx="2" /></>);
+  }
+};
+const BlockIcon = ({ type, size = 18 }: { type: BlockType; size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    {blockGlyph(type)}
+  </svg>
+);
+const SectionIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round">
+    <rect x="4" y="4" width="7" height="7" rx="1.5" /><rect x="13" y="4" width="7" height="7" rx="1.5" /><rect x="4" y="13" width="7" height="7" rx="1.5" /><rect x="13" y="13" width="7" height="7" rx="1.5" />
+  </svg>
+);
+
+// Palette block tile — icon in a tinted badge + label, with a hover lift. Hover is
+// state-driven (onMouseEnter/Leave) because the sandbox strips CSS `:hover`.
+const PaletteTile = ({ T, type, label, hint, onPointerDown }: { T: UITheme; type: BlockType; label: string; hint: string; onPointerDown: (e: any) => void }) => {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title={`${hint} — drag into the canvas, or tap to add at the end`}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8, border: `1px solid ${hover ? T.accent : T.border}`, borderRadius: 10, padding: 10, background: hover ? T.accentBg : T.panel, cursor: 'grab', userSelect: 'none', touchAction: 'none', boxShadow: hover ? '0 1px 2px rgba(16,24,40,0.06)' : 'none' }}
+    >
+      <div style={{ width: 30, height: 30, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hover ? T.accent : T.panel2, color: hover ? '#fff' : T.sub }}>
+        <BlockIcon type={type} />
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: T.ink, lineHeight: '15px' }}>{label}</div>
+    </div>
+  );
+};
+
+// Section preset row — full-width, leading grid badge + label.
+const SectionTile = ({ T, label, onPointerDown }: { T: UITheme; label: string; onPointerDown: (e: any) => void }) => {
+  const [hover, setHover] = useState(false);
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      title="Drag into the canvas, or tap to add at the end"
+      style={{ display: 'flex', alignItems: 'center', gap: 10, border: `1px solid ${hover ? T.accent : T.border}`, borderRadius: 10, padding: '9px 10px', marginBottom: 8, background: hover ? T.accentBg : T.panel, cursor: 'grab', userSelect: 'none', touchAction: 'none', boxShadow: hover ? '0 1px 2px rgba(16,24,40,0.06)' : 'none' }}
+    >
+      <div style={{ width: 26, height: 26, borderRadius: 7, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: hover ? T.accent : T.panel2, color: hover ? '#fff' : T.sub }}>
+        <SectionIcon />
+      </div>
+      <div style={{ fontSize: 12.5, fontWeight: 600, color: T.ink }}>{label}</div>
+    </div>
+  );
+};
 
 export default defineFrontComponent({
   universalIdentifier: REPORT_BUILDER_FC_ID,
