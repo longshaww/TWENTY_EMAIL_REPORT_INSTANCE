@@ -228,6 +228,46 @@ export async function generateInsight(args: {
 export type AssistantMessage = { role: 'user' | 'assistant'; content: string };
 
 /**
+ * Phrase an answer to the user's data question from figures the app already
+ * computed against the CRM (see report-service.arrangeReport's "answer" path).
+ * The model receives the recent conversation for context plus the aggregated
+ * result of an ad-hoc query it requested — it must ground its answer in these
+ * numbers and never invent figures beyond them.
+ */
+export async function answerDataQuestion(args: {
+  messages: AssistantMessage[];
+  specEnglish: string;
+  result: ReportResult;
+}): Promise<string> {
+  const { messages, specEnglish, result } = args;
+  const compact = {
+    measured: specEnglish,
+    object: result.labelPlural,
+    matchedCount: result.matchedCount,
+    grandTotals: result.grandTotals,
+    groupBy: result.groupBy.map((g) => g.label),
+    rows: result.rows.slice(0, 25).map((r) => ({ ...r.group, ...r.values })),
+    currency: result.currencyCode,
+  };
+  const content = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'You are a concise CRM analyst embedded in a report builder. Answer the user\'s latest question directly using ONLY the freshly computed figures provided (they were just queried from the live CRM to answer this question). Lead with the specific number. Keep it to 1–3 short sentences, plain text, no markdown. Do NOT invent or recompute figures beyond those given. If the figures do not actually answer the question, say so plainly.',
+      },
+      ...messages,
+      {
+        role: 'user',
+        content: `Freshly computed figures for "${specEnglish}" (JSON):\n${JSON.stringify(compact)}\n\nAnswer my latest question using these figures.`,
+      },
+    ],
+    { json: false, maxTokens: 400 },
+  );
+  return content.trim();
+}
+
+/**
  * Run a multi-turn assistant conversation constrained to a JSON envelope.
  * Used by the in-builder "arrange the email" assistant, which either asks the
  * user a clarifying question or returns a set of changes to apply.

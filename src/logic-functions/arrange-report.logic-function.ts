@@ -8,7 +8,8 @@ import { resolveCallerMemberId } from 'src/logic-functions/lib/access';
 import { upgradeLayout, type ReportLayout } from 'src/logic-functions/lib/blocks';
 import { accessDeniedError, canAccessReport, loadReport } from 'src/logic-functions/lib/deliver';
 import { getObjectSchema, memberRelationFields } from 'src/logic-functions/lib/metadata';
-import { arrangeReport } from 'src/logic-functions/lib/report-service';
+import { arrangeReport, runSpec } from 'src/logic-functions/lib/report-service';
+import type { ReportResult } from 'src/logic-functions/lib/executor';
 import type { AssistantMessage } from 'src/logic-functions/lib/llm';
 
 // `requestingMemberId` is the caller's member id, resolved on the front-end from
@@ -62,11 +63,21 @@ const handler = async (event: RoutePayload | Input) => {
       : null;
 
   // Scoping context: which member-relation fields exist on the report's object
-  // (empty ⇒ per-recipient scoping is impossible) + the recipient list.
+  // (empty ⇒ per-recipient scoping is impossible) + the recipient list. While we
+  // have the schema, also execute the current spec so the assistant can answer
+  // factual questions about the live numbers (the full, unscoped report figures).
   let scopeableFields: string[] = [];
+  let currentResult: ReportResult | null = null;
   if (report.spec?.object) {
     const schema = await getObjectSchema(report.spec.object);
-    if (schema) scopeableFields = memberRelationFields(schema);
+    if (schema) {
+      scopeableFields = memberRelationFields(schema);
+      try {
+        currentResult = await runSpec(report.spec, schema);
+      } catch {
+        // Execution failed (e.g. the object changed) — answer without live figures.
+      }
+    }
   }
   const recipientNames = report.recipients.map((r) => r.name || r.email);
 
@@ -81,6 +92,7 @@ const handler = async (event: RoutePayload | Input) => {
     scopeableFields,
     scopePerRecipient: report.scopePerRecipient,
     scopeFieldName: report.scopeFieldName,
+    currentResult,
   });
 
   // Persist only when the assistant actually applied changes.

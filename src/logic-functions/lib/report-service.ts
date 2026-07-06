@@ -6,7 +6,7 @@
 import { applyBlockPatches, BLOCK_CONTENT_FIELDS, BLOCK_PALETTE, defaultLayout, sanitizeBlocks, type Block, type ReportLayout } from './blocks';
 import type { PeriodComparison } from './compare';
 import { executeSpec, type ReportResult } from './executor';
-import { chatEnvelope, generateInsight, generateNarrative, planReportSpec, repairReportSpec, type AssistantMessage } from './llm';
+import { answerDataQuestion, chatEnvelope, generateInsight, generateNarrative, planReportSpec, repairReportSpec, type AssistantMessage } from './llm';
 import { buildSchemaSummaryForLLM, getObjectSchema, listReportableSchemas } from './metadata';
 import { planFallback } from './planner-fallback';
 import {
@@ -181,10 +181,16 @@ export type ArrangeInput = {
   scopeableFields?: string[]; // member-relation fields; empty ⇒ scoping impossible
   scopePerRecipient?: boolean;
   scopeFieldName?: string | null;
+  // The report's CURRENT executed figures (grand totals, counts, top groups) so
+  // the assistant can answer factual questions about the numbers ("how much
+  // revenue?", "which rep leads?") instead of claiming it can't see them. Null
+  // when the report has no data spec yet or execution failed.
+  currentResult?: ReportResult | null;
 };
 
 export type ArrangeOutcome = {
-  action: 'ask' | 'apply';
+  // 'answer' = a factual reply about the current figures (no report change).
+  action: 'ask' | 'apply' | 'answer';
   message: string;
   question?: string;
   // present only when action === 'apply'
@@ -213,9 +219,10 @@ const ARRANGE_SYSTEM = `You are the design assistant for an AI email-report buil
 
 You MUST reply with ONLY a JSON object of this shape:
 {
-  "action": "ask" | "apply",
-  "message": "one short sentence addressed TO the user describing what you are doing or asking (e.g. \\"I'll build a weekly exec summary focused on won revenue.\\"). Never echo the user's words back as your own intent.",
+  "action": "ask" | "apply" | "answer",
+  "message": "one short sentence addressed TO the user describing what you are doing or asking (e.g. \\"I'll build a weekly exec summary focused on won revenue.\\"), OR — when action is \\"answer\\" — the direct answer to their question. Never echo the user's words back as your own intent.",
   "question": "ONE concrete, answerable question (only when action is ask) — e.g. \\"Who is the audience: the sales team, or leadership?\\"",
+  "dataQuery": "plain-language description of a figure to compute from the CRM to answer the user's QUESTION — include ONLY with action \\"answer\\" when the 'Current computed figures' in context do NOT already contain the answer (e.g. they ask about a different object, metric, or slice). Omit it when the answer is already in context.",
   "dataPrompt": "plain-language description of WHAT to measure — include ONLY when the underlying data should change; omit to keep the current data",
   "theme": { "accent": "#RRGGBB", "font": "sans|serif|mono", "mode": "light|dark" },
   "personalization": { "scopePerRecipient": true, "scopeFieldName": "<one of the scopeable fields in context>" },
@@ -226,6 +233,9 @@ You MUST reply with ONLY a JSON object of this shape:
 Available block types: ${BLOCK_PALETTE.map((p) => `${p.type} (${p.hint})`).join('; ')}.
 
 Rules:
+- ANSWER QUESTIONS vs ARRANGE. Decide what the user wants:
+  - If they are ASKING A QUESTION about the data / the numbers (e.g. "how many USD has been totaled?", "which rep is highest?", "how many deals are open?", "what changed vs last month?"), set action="answer" and reply in "message". Use the 'Current computed figures' and the conversation so far to answer directly and specifically, citing the real figure. If those figures do NOT already contain the answer (a different object, metric, time window, or slice), ALSO provide "dataQuery" describing what to compute — the system will run it against the CRM and hand you the numbers to phrase. NEVER claim you "don't have the underlying figures": you either have them in context or can compute them via dataQuery.
+  - Only use action="apply"/"ask" when they are asking you to CHANGE the report (its data, layout, copy, theme, or personalization).
 - Ask AT MOST ONE clarifying question, and only when the request is too vague to act on at all (e.g. "make it nicer" with no audience, metric, or focus). If the user has named an audience, a metric/focus, OR a cadence, that is ENOUGH — set action="apply" and pick sensible defaults for anything unspecified, stating the assumption briefly in "message".
 - NEVER ask a second question about something you already asked, and NEVER loop: if the user gives a vague or non-answer (e.g. "now what?", "just do it"), stop asking and set action="apply" with your best interpretation.
 - SCOPE THE EDIT. For a change to ONE (or a few) EXISTING blocks — the Selected block, or when the user says "this/it/that/the chart/the header" — return "blockPatches" containing ONLY the changed fields for those block id(s) from the context. Do NOT return "blocks" in that case: every other block is preserved automatically, so you cannot lose their copy. Use the exact "id" values from the Current blocks JSON (for the Selected block, use its id).
@@ -253,6 +263,31 @@ function compactBlocks(blocks: Block[] | undefined): string {
   return JSON.stringify(compact);
 }
 
+// Compact, human-readable snapshot of the report's CURRENT executed numbers so
+// the assistant can answer factual questions ("how much revenue?", "which rep
+// leads?") from real data instead of deflecting. Currency metrics are formatted.
+function figuresForAssistant(result: ReportResult | null | undefined): string {
+  if (!result) return '(none computed yet — this report has no data spec, so there are no live figures)';
+  const fmt = (alias: string, value: number): string => {
+    const metric = result.metrics.find((m) => m.alias === alias);
+    return metric?.isCurrency ? formatMoney(value, result.currencyCode) : String(value);
+  };
+  const totals =
+    result.metrics.map((m) => `${m.label} = ${fmt(m.alias, result.grandTotals[m.alias] ?? 0)}`).join(', ') || '(no metrics)';
+  const lines = [`Matched rows: ${result.matchedCount}.`, `Grand totals: ${totals}.`];
+  if (result.groupBy.length && result.rows.length) {
+    const primary = result.metrics[0]?.alias;
+    const sorted = primary ? [...result.rows].sort((a, b) => (b.values[primary] ?? 0) - (a.values[primary] ?? 0)) : result.rows;
+    const top = sorted.slice(0, 15).map((r) => {
+      const label = result.groupBy.map((g) => r.group[g.field]).join(' / ');
+      const vals = result.metrics.map((m) => `${m.label} ${fmt(m.alias, r.values[m.alias] ?? 0)}`).join(', ');
+      return `  • ${label}: ${vals}`;
+    });
+    lines.push(`By ${result.groupBy.map((g) => g.label).join(' / ')} (top ${top.length} of ${result.rows.length}):`, ...top);
+  }
+  return lines.join('\n');
+}
+
 function contextForAssistant(input: ArrangeInput): string {
   const selected = input.selectedBlock
     ? `\nSelected block (what "this/it/that" refers to): ${input.selectedBlock.type} (id ${input.selectedBlock.id})`
@@ -264,6 +299,8 @@ function contextForAssistant(input: ArrangeInput): string {
     : `\nPer-recipient scoping is NOT possible for this object (no field links a row to a workspace member), so every recipient necessarily sees the same numbers.`;
   return `Report name: "${input.reportName}"
 Current data (interpreted): ${input.currentSpecEnglish || '(no data spec yet)'}
+Current computed figures (live, as of now):
+${figuresForAssistant(input.currentResult)}
 Current blocks (JSON — id, type, and current settings): ${compactBlocks(input.currentLayout?.blocks)}${selected}
 Current theme: ${JSON.stringify(input.currentLayout?.theme ?? DEFAULT_THEME)}${recipients}${scope}`;
 }
@@ -305,6 +342,25 @@ export async function arrangeReport(input: ArrangeInput): Promise<ArrangeOutcome
       message: 'Sorry, I had trouble arranging that just now — mind trying again, maybe a bit more specifically?',
       question: 'Could you rephrase what you would like changed?',
     };
+  }
+
+  // Q&A: answer a factual question about the data without changing the report.
+  if (envelope?.action === 'answer') {
+    const modelMessage = typeof envelope.message === 'string' ? envelope.message.trim() : '';
+    const dataQuery = typeof envelope.dataQuery === 'string' ? envelope.dataQuery.trim() : '';
+    // If the current figures already answered it, the model replied inline. Only
+    // hit the CRM when it asked for a figure not already in context.
+    if (dataQuery) {
+      try {
+        const generated = await generateSpec(dataQuery, input.currentSpec?.object);
+        const result = await runSpec(generated.spec, generated.schema);
+        const answer = await answerDataQuestion({ messages: input.messages, specEnglish: generated.specEnglish, result });
+        return { action: 'answer', message: answer };
+      } catch {
+        // Query failed — fall back to whatever the model could say from context.
+      }
+    }
+    return { action: 'answer', message: modelMessage || 'I could not work that figure out from the current report.' };
   }
 
   if (envelope?.action !== 'apply') {
