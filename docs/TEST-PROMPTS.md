@@ -29,7 +29,13 @@ Gõ vào panel AI khi report còn trống. Kỳ vọng: AI dựng data + layout 
 | `won revenue by region this quarter` | Nhóm theo region |
 | `deals by lead source, last 90 days` | Nhóm theo kênh acquisition |
 | `count of deals created in the last 30 days by rep` | Đếm (count) theo rep |
+| `which channels drive the most won revenue? last 90 days` | Nhóm theo `leadSource`, lọc won (marketing → field thật) |
+| `how's our funnel looking?` | `count` theo `stage` (thấy tỷ trọng từng bước) |
+| `average deal size by product tier` | `avg` của amount theo `productTier` |
 | `doanh thu thắng theo khu vực trong 90 ngày` | (tiếng Việt) — vẫn ra region breakdown |
+
+> Xem thêm **mục 12** cho các prompt marketing (kênh/funnel/conversion) và cách AI **nói thật** khi
+> hỏi chỉ số CRM không có (email opens, ad spend, CTR, CAC).
 
 ## 2. Trợ lý AI hỏi làm rõ (grill)
 
@@ -176,6 +182,38 @@ member (vd People):
    thấy row `owner is <chính họ>`.
 4. Đặt 1 subscriber sang mode **"tất cả" (ALL)** → người đó thấy full số của workspace (không lọc).
 
+## 12. ⭐ Câu hỏi marketing & trung thực dữ liệu (map-to-proxy + nói thật)
+
+App phục vụ **cả marketing lẫn sales team**. LLM đã được dạy dịch từ vựng marketing sang các
+**field CRM có thật**, và **không bịa** chỉ số không tồn tại trong dữ liệu.
+
+> **Cần `OPENROUTER_API_KEY`:** phần "nói thật / đề xuất proxy" nằm ở narrative/answer do LLM sinh.
+> Fallback planner offline chỉ dựng spec, không giải thích.
+
+**Từ vựng marketing → field thật** (data source = Opportunities, cửa sổ rộng để có số > 0):
+
+| Prompt | Kỳ vọng (bind vào field thật) |
+| --- | --- |
+| `which channels drive the most revenue?` | `sum amount` where stage = CUSTOMER, groupBy `leadSource` |
+| `funnel breakdown by stage` | `count` groupBy `stage` |
+| `what's our win / conversion rate by stage?` | `count` groupBy `stage` — **KHÔNG** có metric "rate"; narrative mô tả tỷ trọng thắng/mở |
+| `demand gen: new pipeline created this quarter by source` | `count`, timeWindow `createdAt`, groupBy `leadSource` |
+| `average contract value (ACV) by product tier` | `avg amount` groupBy `productTier` |
+| `revenue by industry segment` | Tự chuyển object **company**, groupBy `industry` |
+| `hiệu quả từng kênh acquisition` | (tiếng Việt) — vẫn groupBy `leadSource` |
+
+**Chỉ số KHÔNG có trong datasource → AI nói thật, không bịa field:**
+
+| Prompt | Kỳ vọng |
+| --- | --- |
+| `how many email opens last week?` | AI **không tạo field giả** — dựng spec gần nhất và narrative/answer **nói rõ** CRM này không track email opens |
+| `what's our cost per lead / CAC by channel?` | Nói rõ ad spend/CAC không có trong dữ liệu; đề xuất **proxy** (vd won revenue theo `leadSource`) |
+| `show CTR by campaign` | Không có campaign/CTR — nói thật, không bịa object/field |
+| `impressions and clicks by channel` | Nói rõ không track; nếu người dùng muốn, map về `leadSource` mix và **ghi rõ đây là proxy** |
+
+> Điểm mấu chốt: khi có proxy hợp lý → trả lời bằng proxy **và nói rõ đã thay thế**; khi không có →
+> nói thẳng "không track" và gợi ý cái đo được. Tuyệt đối **không** ra một con số/field bịa.
+
 ---
 
 ### Checklist nhanh cho reviewer
@@ -187,3 +225,4 @@ member (vd People):
 - [ ] Đổi data source bằng câu chữ → object chuyển đúng.
 - [ ] Preview hiện số thật; Save persist; reload giữ layout + lịch sử chat.
 - [ ] Scope per recipient: prompt "each rep only their own deals" → bật scope theo `owner`; 2 subscriber SELF ra số khác nhau; object không scope được → AI nói thật, không bịa.
+- [ ] Marketing: "channels/funnel/conversion" map về field thật (`leadSource`/`stage`); "win/conversion rate" → count theo stage (không có metric rate); chỉ số không có (email opens, CAC, CTR) → AI nói thật + đề xuất proxy, không bịa field.

@@ -119,6 +119,16 @@ Rules:
 - sum/avg/min/max require a numeric field (NUMBER or CURRENCY). "count" needs no field.
 - At most 2 groupBy fields. Prefer grouping by the dimension(s) the user names (rep/owner, region, stage, product tier, industry, lead source, month).
 - "won deals" usually means stage is CUSTOMER on opportunity. Money questions use sum of amount.
+- Marketing / demand-gen vocabulary maps onto the same CRM fields (only use a field when it appears in the catalog):
+  - channel / source / "where leads or deals come from" → groupBy leadSource (on opportunity).
+  - segment / vertical / industry → groupBy industry (on company).
+  - region / geo / territory → groupBy region.
+  - funnel / pipeline stages / "where deals sit" → groupBy stage.
+  - demand gen / new leads / new pipeline / new business → count with a timeWindow on createdAt.
+  - deal size / ACV / average contract value → avg of amount (often by productTier).
+  - source ROI / "which channel drives revenue" → sum of amount where stage is CUSTOMER, grouped by leadSource.
+- "conversion rate" / "win rate": there is NO rate/percentage/ratio metric op. Express it as count grouped by stage (so the won-vs-open share is visible); never emit a "rate" metric or attempt division.
+- This CRM tracks pipeline/CRM fields only. It does NOT have ad impressions, clicks, email opens/CTR, ad spend, cost-per-lead/CAC, or MQL/SQL. If asked for one of these, map to the nearest field that exists in the catalog; if none is close, return the nearest answerable spec. Use ONLY object/field/option names that appear in the catalog — never invent one.
 - Keep it minimal: only include filters/timeWindow/groupBy that the request implies.`;
 
 export type PlanResult = { object: string; spec: unknown };
@@ -184,7 +194,7 @@ export async function generateNarrative(args: {
       {
         role: 'system',
         content:
-          'You are a concise analyst. Given aggregated report numbers, write 2–4 short sentences of plain-language insight for a business audience: call out the headline figure, the top and bottom groups, and any notable concentration or trend. Do not invent numbers beyond those provided. Do not use markdown headers. Output plain text only.',
+          'You are a concise revenue & marketing analyst. Given aggregated report numbers, write 2–4 short sentences of plain-language insight for a business audience: call out the headline figure, the top and bottom groups, and any notable concentration or trend. Do not invent numbers beyond those provided. If the original request asked for a metric this CRM does not track (e.g. ad spend, impressions, email opens, CTR, cost-per-lead/CAC), do not fabricate it — describe what was actually measured and note plainly that the requested metric is not tracked here. Do not use markdown headers. Output plain text only.',
       },
       {
         role: 'user',
@@ -213,7 +223,7 @@ export async function generateInsight(args: {
       {
         role: 'system',
         content:
-          'You are a concise sales/revenue analyst. You are given a period-over-period comparison whose figures are ALREADY COMPUTED. Write 1–2 short sentences of plain-language insight for a business audience: lead with the headline metric and its direction versus the previous period, then call out the single most important mover (a group that rose or fell). Be specific about what changed. Do NOT invent or recompute any numbers beyond those provided. No markdown, plain text only.',
+          'You are a concise revenue & marketing analyst. You are given a period-over-period comparison whose figures are ALREADY COMPUTED. Write 1–2 short sentences of plain-language insight for a business audience: lead with the headline metric and its direction versus the previous period, then call out the single most important mover (a group that rose or fell). Be specific about what changed. Do NOT invent or recompute any numbers beyond those provided. No markdown, plain text only.',
       },
       {
         role: 'user',
@@ -226,6 +236,46 @@ export async function generateInsight(args: {
 }
 
 export type AssistantMessage = { role: 'user' | 'assistant'; content: string };
+
+/**
+ * Phrase an answer to the user's data question from figures the app already
+ * computed against the CRM (see report-service.arrangeReport's "answer" path).
+ * The model receives the recent conversation for context plus the aggregated
+ * result of an ad-hoc query it requested — it must ground its answer in these
+ * numbers and never invent figures beyond them.
+ */
+export async function answerDataQuestion(args: {
+  messages: AssistantMessage[];
+  specEnglish: string;
+  result: ReportResult;
+}): Promise<string> {
+  const { messages, specEnglish, result } = args;
+  const compact = {
+    measured: specEnglish,
+    object: result.labelPlural,
+    matchedCount: result.matchedCount,
+    grandTotals: result.grandTotals,
+    groupBy: result.groupBy.map((g) => g.label),
+    rows: result.rows.slice(0, 25).map((r) => ({ ...r.group, ...r.values })),
+    currency: result.currencyCode,
+  };
+  const content = await chat(
+    [
+      {
+        role: 'system',
+        content:
+          'You are a concise CRM analyst embedded in a report builder. Answer the user\'s latest question directly using ONLY the freshly computed figures provided (they were just queried from the live CRM to answer this question). Lead with the specific number. Keep it to 1–3 short sentences, plain text, no markdown. Do NOT invent or recompute figures beyond those given. If the figures are a proxy for what was asked (e.g. lead-source mix standing in for "channel performance"), name the substitution. If the asked-for metric is not tracked in this CRM (e.g. ad spend, impressions, email opens, CTR, CAC), or the figures otherwise do not answer the question, say so plainly.',
+      },
+      ...messages,
+      {
+        role: 'user',
+        content: `Freshly computed figures for "${specEnglish}" (JSON):\n${JSON.stringify(compact)}\n\nAnswer my latest question using these figures.`,
+      },
+    ],
+    { json: false, maxTokens: 400 },
+  );
+  return content.trim();
+}
 
 /**
  * Run a multi-turn assistant conversation constrained to a JSON envelope.
