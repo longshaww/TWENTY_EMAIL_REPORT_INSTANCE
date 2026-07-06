@@ -124,6 +124,15 @@ export const LF_LIST_SCOPE_FIELDS_ID = 'd3f6b2a1-7c4e-4a9b-8f21-3e5c9a0b1d47';
 export const LF_POST_INSTALL_ID = 'b7eb9186-6e69-432b-8efa-75013e6de41c';
 export const LF_STAMP_OWNER_ID = 'f1a2b3c4-d5e6-4f7a-9b8c-0d1e2f3a4b5c';
 
+// --- Member-facing access role + row-level predicates (visibility boundary) ---
+// A user-assignable role whose row-level predicates make Report.visibility a real
+// DB-level boundary: a member sees a Report row iff (owner IS them) OR
+// (visibility IS 'WORKSPACE'). Enforced only on Twenty plans that include RLP.
+export const MEMBER_ACCESS_ROLE_UNIVERSAL_IDENTIFIER = 'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d';
+export const REPORT_RLP_GROUP_OR_ID = 'b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e';
+export const REPORT_RLP_PRED_OWNER_ID = 'c3d4e5f6-a7b8-4c9d-8e0f-2a3b4c5d6e7f';
+export const REPORT_RLP_PRED_WORKSPACE_ID = 'd4e5f6a7-b8c9-4d0e-9f1a-3b4c5d6e7f80';
+
 // --- Reporting-dimension fields added to standard objects ------------------
 export const COMPANY_INDUSTRY_FIELD_ID = '1cf8f3a0-4322-4b91-9f3c-7e593fc2863c';
 export const COMPANY_REGION_FIELD_ID = '35a99cf6-f309-44c5-a713-59f3f94b73f6';
