@@ -9,14 +9,18 @@ import {
   REPORT_VISIBILITY,
   ROUTE_CREATE_REPORT,
 } from 'src/constants/universal-identifiers';
-import { currentMemberId } from 'src/logic-functions/lib/access';
 import { defaultLayout } from 'src/logic-functions/lib/blocks';
 import { getTemplate } from 'src/logic-functions/lib/report-templates';
 import { generateSpec } from 'src/logic-functions/lib/report-service';
 
-// `ownerId` is NOT read from the body — the owner is always the authenticated
-// caller, so a report cannot be planted under (or attributed to) another member.
-type Input = { prompt?: string; name?: string; visibility?: string; templateId?: string; object?: string };
+// `ownerId` is the creating member, resolved on the FRONT-END from the host's
+// `useUserId()` and passed in the body. Logic functions run under the app access
+// token, so the server cannot re-derive the human here — the client-supplied id is
+// trusted. Isolation is advisory (the app role can read all records regardless);
+// the front-end identity is only the authenticated *creator* claiming their own
+// report, not a way to read someone else's. See stamp-report-owner for the native
+// "Add New" path.
+type Input = { prompt?: string; name?: string; visibility?: string; templateId?: string; object?: string; ownerId?: string };
 
 const readInput = (event: any): Input => (isDefined(event?.body) ? event.body : event) ?? {};
 
@@ -44,12 +48,17 @@ const handler = async (event: RoutePayload | Input) => {
   // default layout from the produced spec. Renderer fallbacks handle blocks
   // whose metric aliases don't match the generated spec.
   const layout = template ? template.layout : defaultLayout(generated.spec, name);
-  const visibility =
-    input.visibility === REPORT_VISIBILITY.WORKSPACE ? REPORT_VISIBILITY.WORKSPACE : REPORT_VISIBILITY.PRIVATE;
 
-  // Owner = authenticated caller (server-derived). A PRIVATE report is only ever
-  // accessible to its owner, so an ownerless private report must never be created.
-  const ownerId = await currentMemberId();
+  // Owner = the authenticated creator (front-end `useUserId()` → member id).
+  const ownerId = (input.ownerId ?? '').trim() || undefined;
+  // A PRIVATE report with no owner is accessible to nobody (canAccessReport fails
+  // closed), so if we couldn't establish an owner, create it workspace-visible
+  // rather than as an orphan no one can open.
+  const visibility = !isDefined(ownerId)
+    ? REPORT_VISIBILITY.WORKSPACE
+    : input.visibility === REPORT_VISIBILITY.WORKSPACE
+      ? REPORT_VISIBILITY.WORKSPACE
+      : REPORT_VISIBILITY.PRIVATE;
 
   const client = new CoreApiClient();
   const created: any = await client.mutation({

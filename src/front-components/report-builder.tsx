@@ -1,6 +1,6 @@
 import { CoreApiClient } from 'twenty-client-sdk/core';
 import { defineFrontComponent } from 'twenty-sdk/define';
-import { enqueueSnackbar, useColorScheme, useRecordId, useSelectedRecordIds } from 'twenty-sdk/front-component';
+import { enqueueSnackbar, useColorScheme, useRecordId, useSelectedRecordIds, useUserId } from 'twenty-sdk/front-component';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { REPORT_BUILDER_FC_ID, ROUTE_ARRANGE_REPORT, ROUTE_GENERATE_SPEC, ROUTE_LIST_OBJECTS, ROUTE_LIST_SCOPE_FIELDS, ROUTE_RUN_REPORT } from 'src/constants/universal-identifiers';
@@ -104,7 +104,14 @@ const ReportBuilder = () => {
   const selected = useSelectedRecordIds();
   const legacy = useRecordId();
   const scheme = useColorScheme();
+  const userId = useUserId();
   const reportId = selected?.[0] ?? legacy ?? null;
+
+  // The caller's own member id, resolved from the host `useUserId()` against the
+  // loaded members list. Sent to run/arrange as `requestingMemberId` so the owner
+  // can preview/edit their own PRIVATE report (the server can't derive identity
+  // under the app-token model — see logic-functions/lib/access.ts).
+  const [myMemberId, setMyMemberId] = useState<string | undefined>(undefined);
 
   const [report, setReport] = useState<ReportRecord | null>(null);
   const [blocks, setBlocks] = useState<Block[]>([]);
@@ -230,6 +237,8 @@ const ReportBuilder = () => {
             label: [e.node.name?.firstName, e.node.name?.lastName].filter(Boolean).join(' ') || e.node.userEmail,
           })),
         );
+        const mine = edges.find((e: any) => userId && e.node.userId === userId);
+        setMyMemberId(mine?.node?.id);
       } catch (e: any) {
         if (seq === loadSeq.current) enqueueSnackbar({ message: `Load failed: ${e?.message ?? e}`, variant: 'error' });
       } finally {
@@ -239,7 +248,7 @@ const ReportBuilder = () => {
         }
       }
     },
-    [reportId, client],
+    [reportId, client, userId],
   );
 
   useEffect(() => {
@@ -461,7 +470,7 @@ const ReportBuilder = () => {
     try {
       // When scoping is on and a specific recipient is chosen, preview their own view.
       const previewAsMemberId = report?.scopePerRecipient && previewAsId ? previewAsId : undefined;
-      const r = await callFn(ROUTE_RUN_REPORT, { reportId, mode: 'preview', previewAsMemberId });
+      const r = await callFn(ROUTE_RUN_REPORT, { reportId, mode: 'preview', previewAsMemberId, requestingMemberId: myMemberId });
       if (r?.ok === false) throw new Error(r.error);
       setData({ result: r.result as ReportResult, narrative: r.narrative, specEnglish: r.specEnglish ?? report?.specEnglish ?? '', chartImageUrl: r.chartImageUrl, comparison: r.comparison, insight: r.insight });
     } catch (e: any) {
@@ -474,7 +483,7 @@ const ReportBuilder = () => {
   const sendNow = async () => {
     setBusy('Sending…');
     try {
-      const r = await callFn(ROUTE_RUN_REPORT, { reportId, mode: 'send' });
+      const r = await callFn(ROUTE_RUN_REPORT, { reportId, mode: 'send', requestingMemberId: myMemberId });
       if (r?.ok === false) throw new Error(r.error);
       const msg =
         r.status === 'SUCCESS'
@@ -620,6 +629,7 @@ const ReportBuilder = () => {
         // Tag the selected canvas block so "this/it" resolves to it.
         selectedBlockId: selectedBlock?.id,
         selectedBlockType: selectedBlock?.type,
+        requestingMemberId: myMemberId,
       });
       if (r?.ok === false) throw new Error(r.error);
       // On "ask" the model returns BOTH a preamble message and the actual

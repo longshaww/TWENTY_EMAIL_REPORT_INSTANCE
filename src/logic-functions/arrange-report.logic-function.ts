@@ -4,20 +4,22 @@ import type { RoutePayload } from 'twenty-sdk/logic-function';
 import { isDefined } from 'twenty-sdk/utils';
 
 import { LF_ARRANGE_REPORT_ID, ROUTE_ARRANGE_REPORT } from 'src/constants/universal-identifiers';
-import { currentMemberId } from 'src/logic-functions/lib/access';
+import { resolveCallerMemberId } from 'src/logic-functions/lib/access';
 import { upgradeLayout, type ReportLayout } from 'src/logic-functions/lib/blocks';
 import { accessDeniedError, canAccessReport, loadReport } from 'src/logic-functions/lib/deliver';
 import { getObjectSchema, memberRelationFields } from 'src/logic-functions/lib/metadata';
 import { arrangeReport } from 'src/logic-functions/lib/report-service';
 import type { AssistantMessage } from 'src/logic-functions/lib/llm';
 
-// `requestingMemberId` is NOT read from the body — identity is derived
-// server-side to prevent spoofing another member's access to a private report.
+// `requestingMemberId` is the caller's member id, resolved on the front-end from
+// the host `useUserId()` (the server can't derive it under the app-token model —
+// see lib/access.ts).
 type Input = {
   reportId?: string;
   messages?: AssistantMessage[];
   selectedBlockId?: string;
   selectedBlockType?: string;
+  requestingMemberId?: string;
 };
 
 const readInput = (event: any): Input => (isDefined(event?.body) ? event.body : event) ?? {};
@@ -40,7 +42,7 @@ const handler = async (event: RoutePayload | Input) => {
   const messages = cleanMessages(input.messages);
   if (messages.length === 0) return { ok: false, error: 'At least one message is required.' };
 
-  const callerMemberId = await currentMemberId();
+  const callerMemberId = await resolveCallerMemberId(input.requestingMemberId);
 
   const client = new CoreApiClient();
   const report = await loadReport(client, input.reportId);
