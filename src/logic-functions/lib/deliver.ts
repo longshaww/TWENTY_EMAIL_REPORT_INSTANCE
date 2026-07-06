@@ -112,6 +112,20 @@ export function canAccessReport(report: LoadedReport, callerMemberId?: string | 
   return Boolean(callerMemberId) && callerMemberId === report.ownerId;
 }
 
+/**
+ * Message for a denied `canAccessReport`. Distinguishes the two very different
+ * reasons a caller can be denied so the UX isn't misleading:
+ *  - no `callerMemberId` ⇒ we never established who's asking (a transient
+ *    identity-lookup failure), so tell them to retry rather than claiming the
+ *    report isn't theirs;
+ *  - a resolved id that doesn't match the owner ⇒ a genuine ownership mismatch.
+ */
+export function accessDeniedError(callerMemberId?: string | null): string {
+  return callerMemberId
+    ? 'This report is private to its owner.'
+    : "We couldn't verify your session — please try again.";
+}
+
 export async function loadReport(client: CoreApiClient, reportId: string): Promise<LoadedReport | null> {
   const res: any = await client.query({
     northpeakReport: { __args: { filter: { id: { eq: reportId } } }, ...REPORT_SELECTION },

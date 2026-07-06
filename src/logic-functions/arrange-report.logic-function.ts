@@ -6,7 +6,7 @@ import { isDefined } from 'twenty-sdk/utils';
 import { LF_ARRANGE_REPORT_ID, ROUTE_ARRANGE_REPORT } from 'src/constants/universal-identifiers';
 import { currentMemberId } from 'src/logic-functions/lib/access';
 import { upgradeLayout, type ReportLayout } from 'src/logic-functions/lib/blocks';
-import { canAccessReport, loadReport } from 'src/logic-functions/lib/deliver';
+import { accessDeniedError, canAccessReport, loadReport } from 'src/logic-functions/lib/deliver';
 import { getObjectSchema, memberRelationFields } from 'src/logic-functions/lib/metadata';
 import { arrangeReport } from 'src/logic-functions/lib/report-service';
 import type { AssistantMessage } from 'src/logic-functions/lib/llm';
@@ -46,7 +46,7 @@ const handler = async (event: RoutePayload | Input) => {
   const report = await loadReport(client, input.reportId);
   if (!report) return { ok: false, error: 'Report not found.' };
   if (!canAccessReport(report, callerMemberId)) {
-    return { ok: false, error: 'This report is private to its owner.' };
+    return { ok: false, error: accessDeniedError(callerMemberId) };
   }
 
   const currentLayout: ReportLayout | null =

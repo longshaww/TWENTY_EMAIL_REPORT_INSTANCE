@@ -40,6 +40,7 @@ export const AiPanel = ({
   messages,
   input,
   setInput,
+  composerNonce,
   onSend,
   busy,
   selectedTag,
@@ -49,6 +50,9 @@ export const AiPanel = ({
   messages: ChatTurn[];
   input: string;
   setInput: (v: string) => void;
+  // Changes on each send so the textarea remounts empty (Remote DOM won't reset a
+  // controlled value programmatically — see report-builder sendAi).
+  composerNonce?: number;
   onSend: () => void;
   busy: boolean;
   selectedTag?: { label: string } | null;
@@ -115,6 +119,7 @@ export const AiPanel = ({
         ) : null}
         <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
         <textarea
+          key={composerNonce}
           value={input}
           // Strip a leading newline: in the Remote DOM sandbox preventDefault on
           // Enter is unreliable, so an Enter-to-send can still insert a stray '\n'

@@ -125,6 +125,57 @@ Bỏ `OPENROUTER_API_KEY` trong Settings → app dùng **fallback planner**:
 - Panel AI báo đang dùng "offline planner".
 - `BREVO_API_KEY` trống → **Send now** thành no-op an toàn.
 
+## 11. ⭐ Scope per recipient (mỗi người chỉ thấy dữ liệu của mình)
+
+Report có thể **cá nhân hoá theo người nhận**: mỗi recipient chỉ thấy các bản ghi *của họ*.
+AI planner tự bật khi prompt yêu cầu "của riêng từng người", rồi lọc theo một **field quan hệ tới
+workspace member**. Các field scope được:
+
+| Data source | Field scope |
+| --- | --- |
+| Opportunities | `owner` |
+| Companies | `accountOwner` |
+
+> **Chuẩn bị dữ liệu:** owner/accountOwner phải được **rải trên ≥ 2 member** thì mỗi người mới ra số
+> khác nhau (chạy seed với ≥2 reps). Nếu tất cả record thuộc 1 người, mọi recipient scoped sẽ thấy
+> giống nhau — không phải lỗi.
+
+**Bật scope — Opportunities theo `owner`** (data source = Opportunities):
+
+| Prompt | Kỳ vọng |
+| --- | --- |
+| `pipeline by stage — but send each rep only their own deals` | AI bật `scopePerRecipient`, chọn `owner`, xác nhận trong message |
+| `monthly deals summary, personalized per person so each owner sees only the opportunities they own` | Scope ON theo `owner` |
+| `won deals this quarter by product tier, scoped per recipient` | Scope ON, vẫn nhóm theo tier |
+| `gửi mỗi rep chỉ deal của riêng họ` | (tiếng Việt) — vẫn bật scope theo `owner` |
+
+**Bật scope — Companies theo `accountOwner`** (data source = Companies):
+
+| Prompt | Kỳ vọng |
+| --- | --- |
+| `active accounts by region, but each account owner only sees their own accounts` | Scope ON theo `accountOwner` |
+
+**Test tính trung thực (object KHÔNG scope được):** đổi data source sang object không có field
+member (vd People):
+
+| Prompt | Kỳ vọng |
+| --- | --- |
+| `send each recipient only their own contacts` | AI **không bịa** — nói rõ object này không tách theo người nhận được (mọi người sẽ thấy số giống nhau) và hỏi lại trước khi làm |
+
+**Tắt scope lại:**
+
+| Prompt | Kỳ vọng |
+| --- | --- |
+| `turn off the per-person scoping — send everyone the same full numbers` | `scopePerRecipient = false`, mọi recipient thấy full |
+
+**Cách xác minh:**
+
+1. Dựng report bật scope (Opportunities). Builder xác nhận scope ON qua `owner`.
+2. Setup → **Subscribers**: thêm ≥ 2 member, đặt mode **"chỉ của họ" (SELF)** cho từng người.
+3. **Preview / Send** → mỗi người ra **số khác nhau** (deal count / pipeline) = đúng, vì mỗi người chỉ
+   thấy row `owner is <chính họ>`.
+4. Đặt 1 subscriber sang mode **"tất cả" (ALL)** → người đó thấy full số của workspace (không lọc).
+
 ---
 
 ### Checklist nhanh cho reviewer
@@ -135,3 +186,4 @@ Bỏ `OPENROUTER_API_KEY` trong Settings → app dùng **fallback planner**:
 - [ ] Đổi theme → mọi block giữ nguyên, chart vẫn giữ chỉnh sửa trước đó.
 - [ ] Đổi data source bằng câu chữ → object chuyển đúng.
 - [ ] Preview hiện số thật; Save persist; reload giữ layout + lịch sử chat.
+- [ ] Scope per recipient: prompt "each rep only their own deals" → bật scope theo `owner`; 2 subscriber SELF ra số khác nhau; object không scope được → AI nói thật, không bịa.

@@ -5,7 +5,7 @@ import { isDefined } from 'twenty-sdk/utils';
 
 import { LF_RUN_REPORT_ID, ROUTE_RUN_REPORT, RUN_TRIGGER } from 'src/constants/universal-identifiers';
 import { currentMemberId } from 'src/logic-functions/lib/access';
-import { buildRender, canAccessReport, deliver, loadReport } from 'src/logic-functions/lib/deliver';
+import { accessDeniedError, buildRender, canAccessReport, deliver, loadReport } from 'src/logic-functions/lib/deliver';
 
 // `requestingMemberId`/`previewAsMemberId` are NOT read from the body — identity
 // is derived server-side to prevent spoofing. `previewAsMemberId` is honored only
@@ -29,7 +29,7 @@ const handler = async (event: RoutePayload | Input) => {
   // Private reports are only previewable/sendable by their owner (identity
   // resolved server-side, not from the request body).
   if (!canAccessReport(report, callerMemberId)) {
-    return { ok: false, error: 'This report is private to its owner.' };
+    return { ok: false, error: accessDeniedError(callerMemberId) };
   }
 
   // "Preview as [recipient]" is an owner-only tool (see what a scoped rep sees);

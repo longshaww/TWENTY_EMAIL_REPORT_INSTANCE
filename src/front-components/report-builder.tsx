@@ -131,6 +131,10 @@ const ReportBuilder = () => {
   const [aiMessages, setAiMessages] = useState<ChatTurn[]>([]);
   const [aiInput, setAiInput] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
+  // Bumped on each send to remount the composer textarea — a plain setAiInput('')
+  // does not reset the controlled <textarea> inside the Remote DOM sandbox, so we
+  // change its React key to force a fresh (empty) element instead.
+  const [composerNonce, setComposerNonce] = useState(0);
 
   const [past, setPast] = useState<Snap[]>([]);
   const [future, setFuture] = useState<Snap[]>([]);
@@ -607,6 +611,7 @@ const ReportBuilder = () => {
     // so we don't push a static "Thinking…" bubble.
     setAiMessages(convo);
     setAiInput('');
+    setComposerNonce((n) => n + 1);
     setAiBusy(true);
     try {
       const r = await callFn(ROUTE_ARRANGE_REPORT, {
@@ -826,6 +831,7 @@ const ReportBuilder = () => {
                 messages={aiMessages}
                 input={aiInput}
                 setInput={setAiInput}
+                composerNonce={composerNonce}
                 onSend={sendAi}
                 busy={aiBusy}
                 selectedTag={selectedBlock ? { label: BLOCK_PALETTE.find((p) => p.type === selectedBlock.type)?.label ?? selectedBlock.type } : null}

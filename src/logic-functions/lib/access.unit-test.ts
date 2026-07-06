@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { REPORT_VISIBILITY } from 'src/constants/universal-identifiers';
-import { canAccessReport, type LoadedReport } from './deliver';
+import { accessDeniedError, canAccessReport, type LoadedReport } from './deliver';
 
 const report = (visibility: string, ownerId: string | null): LoadedReport =>
   ({ visibility, ownerId } as LoadedReport);
@@ -25,5 +25,16 @@ describe('canAccessReport', () => {
   it('PRIVATE report with no owner fails closed (never world-open)', () => {
     expect(canAccessReport(report(REPORT_VISIBILITY.PRIVATE, null), 'anyone')).toBe(false);
     expect(canAccessReport(report(REPORT_VISIBILITY.PRIVATE, null), undefined)).toBe(false);
+  });
+});
+
+describe('accessDeniedError', () => {
+  it('tells an unverified caller (no id) to retry rather than claiming ownership', () => {
+    expect(accessDeniedError(undefined)).toMatch(/verify your session/i);
+    expect(accessDeniedError(null)).toMatch(/verify your session/i);
+  });
+
+  it('reports a genuine ownership mismatch when the caller id is known', () => {
+    expect(accessDeniedError('someone-else')).toMatch(/private to its owner/i);
   });
 });
