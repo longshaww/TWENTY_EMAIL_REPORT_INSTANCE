@@ -27,9 +27,11 @@ const handler = async (event: RoutePayload | Input) => {
   const report = await loadReport(client, input.reportId);
   if (!report) return { ok: false, error: 'Report not found.' };
 
-  // Private reports are only previewable/sendable by their owner (identity
-  // resolved server-side, not from the request body).
-  if (!canAccessReport(report, callerMemberId)) {
+  // READ vs WRITE split: previewing is a READ open to any workspace member (even a
+  // PRIVATE report they don't own). Sending the email is a WRITE/manage action, so
+  // it stays gated by canAccessReport (PRIVATE → owner only; WORKSPACE → all).
+  // Editing (arrange-report) is likewise owner-gated for PRIVATE.
+  if (mode === 'send' && !canAccessReport(report, callerMemberId)) {
     return { ok: false, error: accessDeniedError(callerMemberId) };
   }
 

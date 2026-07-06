@@ -96,15 +96,15 @@ function toLoaded(r: any): LoadedReport {
 }
 
 /**
- * Authorization for user-triggered access (preview/send/arrange).
+ * Authorization for WRITE/manage actions on a report (send email, arrange/edit).
+ * READ (preview) is intentionally NOT gated by this — any workspace member may
+ * preview any report, including a PRIVATE one they don't own (see run-report).
  *
- * WORKSPACE reports are open to any member. A PRIVATE report is only accessible
- * to its owner. `callerMemberId` MUST be derived server-side (see
- * lib/access.ts `currentMemberId`) — never taken from the request body — so it
- * cannot be spoofed. Ownerless PRIVATE reports fail closed (all create paths now
- * stamp an owner, so an ownerless private report is treated as inaccessible
- * rather than world-open). Cron/dispatcher runs never call this — they invoke
- * deliver() directly and are trusted by design.
+ * WORKSPACE reports are writable by any member. A PRIVATE report is writable only
+ * by its owner. Ownerless PRIVATE reports fail closed (all create paths now stamp
+ * an owner, so an ownerless private report is treated as unmanageable rather than
+ * world-open). Cron/dispatcher runs never call this — they invoke deliver()
+ * directly and are trusted by design.
  */
 export function canAccessReport(report: LoadedReport, callerMemberId?: string | null): boolean {
   if (report.visibility !== REPORT_VISIBILITY.PRIVATE) return true;
