@@ -173,6 +173,7 @@ async function main() {
               jobTitle: pick(TITLES),
               emails: { primaryEmail: `contact${personCount}@${c.domain}` },
               companyId,
+              ownerId: accountOwner.id,
             },
           },
           id: true,

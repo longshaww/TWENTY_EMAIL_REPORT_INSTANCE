@@ -129,6 +129,15 @@ export const OPP_LEAD_SOURCE_FIELD_ID = '958122b7-9730-45df-9a3c-aff92dfbabe0';
 export const OPP_PRODUCT_TIER_FIELD_ID = '050b41ef-06ec-4939-8c49-d085c2411d67';
 export const OPP_REGION_FIELD_ID = 'd6712b04-c722-4fb7-a6d1-4457652ad7a9';
 
+// --- Member-relation "scope by" fields for per-recipient scoping ------------
+// Standard Company (accountOwner) and Task (assignee) already relate rows to a
+// workspace member; Opportunity and Person did not, so per-recipient scoping was
+// impossible over them. These add an `owner` relation to close that gap.
+export const OPP_OWNER_FIELD_ID = '2fc4f35f-3973-4269-99a1-a1b090df6c61';
+export const OPP_OWNER_REVERSE_FIELD_ID = 'f805eaa8-4a2a-43c2-aaee-b1956c7d9c6a';
+export const PERSON_OWNER_FIELD_ID = '71b82f08-6bb1-445a-a270-dd973c95c6a5';
+export const PERSON_OWNER_REVERSE_FIELD_ID = '4304dd7a-fdc8-45e3-9d33-0185cd2d1a49';
+
 // --- AI skill (native tool surface) ----------------------------------------
 export const SKILL_ID = 'b1f81e5f-b5e1-456e-a8f0-cac41f467e8e';
 
