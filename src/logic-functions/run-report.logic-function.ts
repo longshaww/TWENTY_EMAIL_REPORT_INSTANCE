@@ -4,13 +4,14 @@ import type { RoutePayload } from 'twenty-sdk/logic-function';
 import { isDefined } from 'twenty-sdk/utils';
 
 import { LF_RUN_REPORT_ID, ROUTE_RUN_REPORT, RUN_TRIGGER } from 'src/constants/universal-identifiers';
-import { currentMemberId } from 'src/logic-functions/lib/access';
+import { resolveCallerMemberId } from 'src/logic-functions/lib/access';
 import { accessDeniedError, buildRender, canAccessReport, deliver, loadReport } from 'src/logic-functions/lib/deliver';
 
-// `requestingMemberId`/`previewAsMemberId` are NOT read from the body — identity
-// is derived server-side to prevent spoofing. `previewAsMemberId` is honored only
-// for the report's own owner (previewing what a scoped recipient sees).
-type Input = { reportId?: string; mode?: 'preview' | 'send'; previewAsMemberId?: string };
+// `requestingMemberId` is the caller's member id, resolved on the front-end from
+// the host `useUserId()` (the server can't derive it under the app-token model —
+// see lib/access.ts). `previewAsMemberId` is honored only for the report's own
+// owner (previewing what a scoped recipient sees).
+type Input = { reportId?: string; mode?: 'preview' | 'send'; previewAsMemberId?: string; requestingMemberId?: string };
 
 const readInput = (event: any): Input => (isDefined(event?.body) ? event.body : event) ?? {};
 
@@ -20,7 +21,7 @@ const handler = async (event: RoutePayload | Input) => {
   const mode = input.mode === 'send' ? 'send' : 'preview';
   if (!isDefined(input.reportId)) return { ok: false, error: 'reportId is required.' };
 
-  const callerMemberId = await currentMemberId();
+  const callerMemberId = await resolveCallerMemberId(input.requestingMemberId);
 
   const client = new CoreApiClient();
   const report = await loadReport(client, input.reportId);
