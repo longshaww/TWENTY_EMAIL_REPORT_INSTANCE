@@ -289,10 +289,23 @@ export async function arrangeReport(input: ArrangeInput): Promise<ArrangeOutcome
     };
   }
 
-  const envelope = await chatEnvelope(
-    `${ARRANGE_SYSTEM}\n\nCONTEXT:\n${contextForAssistant(input)}`,
-    input.messages,
-  );
+  let envelope: any;
+  try {
+    envelope = await chatEnvelope(
+      `${ARRANGE_SYSTEM}\n\nCONTEXT:\n${contextForAssistant(input)}`,
+      input.messages,
+    );
+  } catch {
+    // The assistant model hiccuped (timeout, rate-limit, or output we still
+    // couldn't parse after the repair retry). Degrade to a friendly, retryable
+    // chat turn instead of failing the whole route with a raw 500 — consistent
+    // with how generateSpec()/narrate() degrade rather than crash.
+    return {
+      action: 'ask',
+      message: 'Sorry, I had trouble arranging that just now — mind trying again, maybe a bit more specifically?',
+      question: 'Could you rephrase what you would like changed?',
+    };
+  }
 
   if (envelope?.action !== 'apply') {
     const question = typeof envelope?.question === 'string' && envelope.question.trim() ? envelope.question.trim() : 'Could you tell me a bit more about what you want and who it is for?';

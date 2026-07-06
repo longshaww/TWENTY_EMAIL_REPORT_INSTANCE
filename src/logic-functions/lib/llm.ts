@@ -231,10 +231,33 @@ export type AssistantMessage = { role: 'user' | 'assistant'; content: string };
  * Run a multi-turn assistant conversation constrained to a JSON envelope.
  * Used by the in-builder "arrange the email" assistant, which either asks the
  * user a clarifying question or returns a set of changes to apply.
+ *
+ * The envelope can be large — an "apply" that reorders blocks echoes every
+ * block's copy verbatim — so the budget is generous. If the first reply still
+ * can't be parsed (usually truncation at max_tokens, occasionally stray prose),
+ * retry once with double the budget and an explicit "JSON only" nudge. The nudge
+ * matters because temperature is 0: without changing the request, a second call
+ * would reproduce the same unparseable output byte-for-byte.
  */
-export async function chatEnvelope(system: string, messages: AssistantMessage[], maxTokens = 1600): Promise<any> {
-  const content = await chat([{ role: 'system', content: system }, ...messages], { json: true, maxTokens });
-  return parseJsonLoose(content);
+export async function chatEnvelope(system: string, messages: AssistantMessage[], maxTokens = 4000): Promise<any> {
+  const first = await chat([{ role: 'system', content: system }, ...messages], { json: true, maxTokens });
+  try {
+    return parseJsonLoose(first);
+  } catch {
+    const second = await chat(
+      [
+        { role: 'system', content: system },
+        ...messages,
+        {
+          role: 'user',
+          content:
+            'Reply with ONLY a single complete, valid JSON object for the schema above — no prose, no code fences, and do not truncate it.',
+        },
+      ],
+      { json: true, maxTokens: maxTokens * 2 },
+    );
+    return parseJsonLoose(second);
+  }
 }
 
 // Re-export types for convenience where the provider is imported.
