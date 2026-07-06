@@ -63,22 +63,26 @@ export const AiPanel = ({
     endRef.current?.scrollIntoView?.({ block: 'end' });
   }, [messages.length, busy]);
 
-  // Clear-on-send. The Remote DOM host keeps the <textarea> uncontrolled and only
-  // pushes NON-empty values to it, so setting value='' never clears the box — and a
-  // `key` change alone doesn't reliably remount across the worker boundary. So on
-  // each send (composerNonce bump) we force a genuine unmount→remount: hide the
-  // textarea for one tick, then bring it back fresh (empty, since `input` is now '').
+  // Clear-on-send. The Remote DOM host renders the <textarea> UNCONTROLLED
+  // (createCaretPreservingElement: `defaultValue` at mount, then only pushes
+  // NON-empty values via syncValuePreservingCaret's `if (isNonEmptyString(value))`
+  // guard). So `setInput('')` is ignored, and a bare `key` remount is reconciled
+  // to the SAME host DOM node (same tag+position) — the typed text survives.
+  // Fix: on each send (composerNonce bump) swap the textarea for a placeholder
+  // <div> for one tick, then bring the textarea back. The TYPE change (div ≠
+  // textarea) forces the host to build a brand-new element (defaultValue empty,
+  // since `input` is now ''). The setTimeout guarantees the unmount frame is
+  // flushed across the worker→host boundary before the remount (otherwise the
+  // two updates batch into one commit and the swap never reaches the host).
   const [composerMounted, setComposerMounted] = useState(true);
   const lastNonce = useRef(composerNonce);
   useEffect(() => {
-    if (composerNonce !== lastNonce.current) {
-      lastNonce.current = composerNonce;
-      setComposerMounted(false);
-    }
+    if (composerNonce === lastNonce.current) return;
+    lastNonce.current = composerNonce;
+    setComposerMounted(false);
+    const id = setTimeout(() => setComposerMounted(true), 30);
+    return () => clearTimeout(id);
   }, [composerNonce]);
-  useEffect(() => {
-    if (!composerMounted) setComposerMounted(true);
-  }, [composerMounted]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
